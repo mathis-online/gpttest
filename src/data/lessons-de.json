@@ -1,0 +1,8 @@
+{
+  "pawns": {
+    "title": "Die Bauern",
+    "steps": [
+      {"from": "e2", "to": "e4"}
+    ]
+  }
+}
