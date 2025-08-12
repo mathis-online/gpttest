@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>ROI Rechner</title>
+<style>
+body{font-family:Arial, sans-serif;margin:0;padding:0;line-height:1.4;background:#f7f7f7;color:#222}
+header{background:#00557c;color:#fff;padding:1rem;text-align:center}
+main{display:flex;flex-wrap:wrap;padding:1rem;gap:1rem}
+form{flex:1 1 300px;background:#fff;padding:1rem;border-radius:8px;box-shadow:0 0 4px rgba(0,0,0,.1)}
+#results{flex:1 1 300px;background:#fff;padding:1rem;border-radius:8px;box-shadow:0 0 4px rgba(0,0,0,.1)}
+section{margin-bottom:1rem}
+label{display:block;margin-bottom:.25rem}
+input,select{width:100%;padding:.4rem;margin-bottom:.5rem}
+.table-wrapper{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{border:1px solid #ddd;padding:.25rem .5rem;text-align:right}
+th{text-align:center;background:#eee}
+.card{background:#f0f4f8;padding:.5rem;margin-bottom:.5rem;border-radius:4px}
+canvas{max-width:100%;}
+.buttons{display:flex;flex-wrap:wrap;gap:.5rem;margin:.5rem 0}
+.buttons button{flex:1 1 auto;padding:.5rem}
+@media(max-width:700px){main{flex-direction:column}}
+</style>
+</head>
+<body>
+<header><h1>ROI Rechner</h1></header>
+<main>
+<form id="inputs">
+<section>
+<label>Währung
+<select id="currency">
+<option>CHF</option>
+<option>EUR</option>
+<option>USD</option>
+</select></label>
+<label>Anfangsinvestition (CapEx)
+<input type="number" id="capex" min="0" step="0.01"/></label>
+<label>Einnahmen pro Periode
+<input type="number" id="revenue" min="0" step="0.01"/></label>
+<label>Kosten pro Periode
+<input type="number" id="cost" min="0" step="0.01"/></label>
+<label>Anzahl Perioden
+<input type="number" id="periods" min="1" step="1"/></label>
+<label>Periodizität
+<select id="periodicity"><option value="month">Monat</option><option value="year">Jahr</option></select></label>
+<label>Diskontsatz (% p.a.)
+<input type="number" id="discount" min="0" step="0.01"/></label>
+<label>Steuersatz (%)
+<input type="number" id="tax" min="0" max="100" step="0.01"/></label>
+<label>Abschreibungsdauer (Perioden)
+<input type="number" id="depr" min="1" step="1"/></label>
+<label>Restwert am Ende
+<input type="number" id="residual" step="0.01"/></label>
+<label>Inflationsrate (% p.a.)
+<input type="number" id="inflation" step="0.01"/></label>
+<label><input type="checkbox" id="inflateCost"/> Kosten inflationsindexiert</label>
+</section>
+<section>
+<h3>Szenarien</h3>
+<label>Basis Einnahmen Multiplikator <input type="number" id="baseRev" step="0.01"/></label>
+<label>Basis Kosten Multiplikator <input type="number" id="baseCost" step="0.01"/></label>
+<label>Optimistisch Einnahmen Multiplikator <input type="number" id="optRev" step="0.01"/></label>
+<label>Optimistisch Kosten Multiplikator <input type="number" id="optCost" step="0.01"/></label>
+<label>Pessimistisch Einnahmen Multiplikator <input type="number" id="pesRev" step="0.01"/></label>
+<label>Pessimistisch Kosten Multiplikator <input type="number" id="pesCost" step="0.01"/></label>
+</section>
+<div class="buttons">
+<button type="button" id="calculate">Berechnen</button>
+<button type="button" id="reset">Zurücksetzen</button>
+<button type="button" id="exportCSV">CSV exportieren</button>
+<button type="button" id="exportPNG">Chart als PNG</button>
+<button type="button" id="clearLS">Alles löschen</button>
+</div>
+</form>
+<div id="results">
+<div id="kpis"></div>
+<canvas id="chart" width="600" height="300" aria-label="Cashflow Chart"></canvas>
+<div class="table-wrapper"><table id="cashflowTable"></table></div>
+</div>
+</main>
+<script>
+// Utility
+const nf = new Intl.NumberFormat('de-CH');
+function fmt(n, c) {return nf.format(n.toFixed(c));}
+function saveInputs(){const d=getInputs();localStorage.setItem('roiInputs',JSON.stringify(d));}
+function loadInputs(){let d=localStorage.getItem('roiInputs');if(!d) return null;try{return JSON.parse(d);}catch(e){return null}}
+function getInputs(){return {
+ currency:document.querySelector('#currency').value,
+ capex:parseFloat(document.querySelector('#capex').value)||0,
+ revenuePerPeriod:parseFloat(document.querySelector('#revenue').value)||0,
+ costPerPeriod:parseFloat(document.querySelector('#cost').value)||0,
+ periods:parseInt(document.querySelector('#periods').value)||1,
+ periodicity:document.querySelector('#periodicity').value,
+ discountRateAnnual:parseFloat(document.querySelector('#discount').value)/100||0,
+ taxRate:parseFloat(document.querySelector('#tax').value)/100||0,
+ depreciationPeriods:parseInt(document.querySelector('#depr').value)||null,
+ residualValue:parseFloat(document.querySelector('#residual').value)||0,
+ inflationRate:parseFloat(document.querySelector('#inflation').value)/100||0,
+ inflateCosts:document.querySelector('#inflateCost').checked,
+ scenarios:{
+  base:{revMul:parseFloat(document.querySelector('#baseRev').value)||1,costMul:parseFloat(document.querySelector('#baseCost').value)||1},
+  opt:{revMul:parseFloat(document.querySelector('#optRev').value)||1.1,costMul:parseFloat(document.querySelector('#optCost').value)||0.9},
+  pes:{revMul:parseFloat(document.querySelector('#pesRev').value)||0.9,costMul:parseFloat(document.querySelector('#pesCost').value)||1.1}
+ }
+};}
+function setInputs(d){if(!d)return;document.querySelector('#currency').value=d.currency;
+['capex','revenue','cost','periods','discount','tax','depr','residual','inflation'].forEach(id=>document.querySelector('#'+id).value=d[id]!==undefined?d[id]:"");
+document.querySelector('#periodicity').value=d.periodicity;
+document.querySelector('#inflateCost').checked=d.inflateCosts;
+if(d.scenarios){document.querySelector('#baseRev').value=d.scenarios.base.revMul;document.querySelector('#baseCost').value=d.scenarios.base.costMul;document.querySelector('#optRev').value=d.scenarios.opt.revMul;document.querySelector('#optCost').value=d.scenarios.opt.costMul;document.querySelector('#pesRev').value=d.scenarios.pes.revMul;document.querySelector('#pesCost').value=d.scenarios.pes.costMul;}}
+// defaults if no localstorage
+if(!setInputs(loadInputs())){
+ document.querySelector('#currency').value='CHF';
+ document.querySelector('#capex').value=100000;
+ document.querySelector('#revenue').value=15000;
+ document.querySelector('#cost').value=8000;
+ document.querySelector('#periods').value=36;
+ document.querySelector('#periodicity').value='month';
+ document.querySelector('#discount').value=8;
+ document.querySelector('#tax').value=20;
+ document.querySelector('#depr').value=36;
+ document.querySelector('#residual').value=0;
+ document.querySelector('#inflation').value=2;
+ document.querySelector('#inflateCost').checked=true;
+ document.querySelector('#baseRev').value=1;document.querySelector('#baseCost').value=1;
+ document.querySelector('#optRev').value=1.1;document.querySelector('#optCost').value=0.9;
+ document.querySelector('#pesRev').value=0.9;document.querySelector('#pesCost').value=1.1;
+}
+
+let debounceTimer=null;document.querySelectorAll('#inputs input,#inputs select').forEach(el=>{el.addEventListener('input',()=>{clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>{saveInputs();calculate();},150);});});
+document.querySelector('#calculate').addEventListener('click',()=>{saveInputs();calculate();});
+document.querySelector('#reset').addEventListener('click',()=>{localStorage.removeItem('roiInputs');location.reload();});
+document.querySelector('#clearLS').addEventListener('click',()=>{localStorage.clear();location.reload();});
+
+function calculate(){const inp=getInputs();const results={};Object.keys(inp.scenarios).forEach(key=>{results[key]=calcScenario(inp,inp.scenarios[key]);});renderResults(inp,results);currentResults={inputs:inp,resultsByScenario:results};}
+
+function calcScenario(inp,mul){const T=inp.periods;const capex=inp.capex;const rp=inp.periodicity==='month'?Math.pow(1+inp.discountRateAnnual,1/12)-1:inp.discountRateAnnual;const infl=inp.periodicity==='month'?Math.pow(1+inp.inflationRate,1/12)-1:inp.inflationRate;const depPer=inp.depreciationPeriods?capex/inp.depreciationPeriods:0;const cashflows=[{t:0,fcf:-capex,dcf:-capex,cumFcf:-capex}];let cum=-capex;let sumProfit=0;for(let t=1;t<=T;t++){let rev=inp.revenuePerPeriod*mul.revMul*Math.pow(1+infl,t-1);let cost=inp.costPerPeriod*mul.costMul*(inp.inflateCosts?Math.pow(1+infl,t-1):1);let depr=t<=inp.depreciationPeriods?depPer:0;let profitBT=rev-cost-depr;let tax=profitBT>0?profitBT*inp.taxRate:0;let profitAT=profitBT-tax;sumProfit+=profitAT;let fcf=profitAT+depr; if(t===T) fcf+=inp.residualValue;cum+=fcf;let dcf=fcf/Math.pow(1+rp,t);cashflows.push({t,revenue:rev,cost,depr,profitBT,tax,profitAT,fcf,dcf,cumFcf:cum});}
+const npv=cashflows.reduce((a,b)=>a+b.dcf,0);const irr=computeIRR(cashflows.map(c=>c.fcf));const payback=computePayback(cashflows.map(c=>c.fcf));const cagr=Math.pow((capex+cashflows.slice(1).reduce((a,b)=>a+b.fcf,0))/capex,1/T)-1;const breakeven=payback;return {cashflows,kpis:{ROI:sumProfit/capex*100,NPV:npv,IRR:irr,Payback:payback,CAGR:cagr,BreakEvenPeriod:breakeven}};}
+
+function computeIRR(cf){let low=-0.9999,high=10,mid;let npv=0;for(let i=0;i<200;i++){mid=(low+high)/2;npv=0;for(let t=0;t<cf.length;t++)npv+=cf[t]/Math.pow(1+mid,t);if(Math.abs(npv)<1e-7)return mid;if(npv>0)low=mid;else high=mid;}return null;}
+function computePayback(cf){let cum=0;for(let t=0;t<cf.length;t++){cum+=cf[t];if(cum>=0){if(t===0)return 0;let prevCum=cum-cf[t];return t-1+(0-prevCum)/cf[t];}}return null;}
+
+function renderResults(inp,res){const kpiDiv=document.querySelector('#kpis');kpiDiv.innerHTML='';Object.keys(res).forEach(key=>{const k=res[key].kpis;let card=document.createElement('div');card.className='card';card.innerHTML=`<strong>${key}</strong><br>ROI: ${fmt(k.ROI,2)}%<br>NPV: ${fmt(k.NPV,2)}<br>IRR: ${k.IRR!==null?fmt(k.IRR*100,2)+'%':'n/a'}<br>Payback: ${k.Payback?fmt(k.Payback,2):'n/a'}<br>CAGR: ${fmt(k.CAGR*100,2)}%`;kpiDiv.appendChild(card);});renderTable(inp,res.base.cashflows);drawChart(inp,res);}
+
+function renderTable(inp,cf){const tbl=document.querySelector('#cashflowTable');let html='<tr><th>t</th><th>Einnahmen</th><th>Kosten</th><th>Abschr.</th><th>Gewinn v.St.</th><th>Steuer</th><th>Gewinn n.St.</th><th>FCF</th><th>DCF</th><th>kumul.</th></tr>';cf.forEach(r=>{html+=`<tr><td>${r.t}</td><td>${fmt(r.revenue||0,2)}</td><td>${fmt(r.cost||0,2)}</td><td>${fmt(r.depr||0,2)}</td><td>${fmt(r.profitBT||0,2)}</td><td>${fmt(r.tax||0,2)}</td><td>${fmt(r.profitAT||0,2)}</td><td>${fmt(r.fcf||0,2)}</td><td>${fmt(r.dcf||0,2)}</td><td>${fmt(r.cumFcf||0,2)}</td></tr>`;});tbl.innerHTML=html;}
+
+function drawChart(inp,res){const canvas=document.querySelector('#chart');const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);const scenarios=['base','opt','pes'];const colors={base:'#00557c',opt:'#2a9d8f',pes:'#e76f51'};const maxY=Math.max(...scenarios.map(s=>Math.max(...res[s].cashflows.map(c=>c.cumFcf))));const minY=Math.min(...scenarios.map(s=>Math.min(...res[s].cashflows.map(c=>c.cumFcf))));const padding=40;ctx.strokeStyle='#000';ctx.beginPath();ctx.moveTo(padding,10);ctx.lineTo(padding,canvas.height-padding);ctx.lineTo(canvas.width-10,canvas.height-padding);ctx.stroke();const scaleX=(canvas.width-padding-10)/(inp.periods);const scaleY=(canvas.height-padding-10)/(maxY-minY||1);scenarios.forEach(s=>{ctx.strokeStyle=colors[s];ctx.beginPath();res[s].cashflows.forEach((c,i)=>{const x=padding+i*scaleX;const y=canvas.height-padding-(c.cumFcf-minY)*scaleY; if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);});ctx.stroke();});}
+
+document.querySelector('#exportCSV').addEventListener('click',()=>{if(!currentResults)return;const cf=currentResults.resultsByScenario.base.cashflows;let csv='t,revenue,cost,depr,profitBT,tax,profitAT,fcf,dcf,cumFcf\n';cf.forEach(r=>{csv+=`${r.t},${r.revenue||0},${r.cost||0},${r.depr||0},${r.profitBT||0},${r.tax||0},${r.profitAT||0},${r.fcf||0},${r.dcf||0},${r.cumFcf||0}\n`;});const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='cashflows.csv';a.click();});
+document.querySelector('#exportPNG').addEventListener('click',()=>{const canvas=document.querySelector('#chart');const a=document.createElement('a');a.href=canvas.toDataURL('image/png');a.download='chart.png';a.click();});
+
+let currentResults=null;calculate();
+</script>
+</body>
+</html>
